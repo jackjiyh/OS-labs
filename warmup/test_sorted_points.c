@@ -213,6 +213,7 @@ basic_test()
 
 	sp_destroy(sp1);
 	sp_destroy(sp2);
+	//printf("static end\n");
 }
 
 /* rudimentary check for memory leaks */
