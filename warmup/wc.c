@@ -2,9 +2,10 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <ctype.h>
+#include <math.h>
 #include "common.h"
 #include "wc.h"
-#define M 5000
+#define M 5000000
 
 struct entry;
 void word_copy(char * source, long begin, long len, struct entry * dest);
@@ -21,12 +22,16 @@ struct entry {
 };
 
 long hash_func(char * word, long begin, long len) {
-    long value = 0;
+    long value = 5381;
+    int c;
     long i;
     for (i=begin; i < begin+len; i++) {
-        value += word[i] - '0' + 2;
+        //value += word[i] - '0' + 2;
+        c = word[i];
+        value = ( (value << 5) + value ) ^ c;
     }
-    return ((value/1000)*M)%M;
+    //return ((value/2000)*M) % M;
+    return abs(value % M);
 }
 
 
@@ -37,11 +42,12 @@ struct wc {
 
 void word_copy(char * source, long begin, long len, struct entry * dest) {
     dest->len = len;
-    dest->word = (char *)malloc(sizeof(char)*len);
+    dest->word = (char *)malloc(sizeof(char)*(len+1));
     long i;
     for (i=begin; i<begin+len;i++) {
         dest->word[i-begin] = source[i];
     }
+    dest->word[len] = 0;
     //dest->next = NULL;
     dest->count = 1;
 }
@@ -110,6 +116,7 @@ wc_init(char *word_array, long size)
 
 	//TBD();
         long begin = 0, len = 0;
+        long coll = 0;
         for (i=0; i<size; i++) {
             if ( !isspace(word_array[i]) ) {
                 len++;
@@ -125,12 +132,13 @@ wc_init(char *word_array, long size)
                 while ( !insert_word(wc, word_array, hashValue, begin, len) ) {
                     if (hashValue < M -1) hashValue++;
                     else hashValue = 0;
+                    coll++;
                 }
                 begin = begin + len + 1;
                 len = 0;
             }
         }
-        
+        //printf("The # of collision: %ld\n", coll);
 	return wc;
 }
 
@@ -139,15 +147,18 @@ wc_output(struct wc *wc)
 {
 	//TBD();
 	long i;
+	long size = 0;
 	for (i=0; i<M; i++) {
 	    if (wc->wordCount[i] != NULL) {
 	        //struct entry * curEn = wc->wordCount[i];
 	        //while (curEn != NULL) {
 	        printf("%s:%d\n", wc->wordCount[i]->word, wc->wordCount[i]->count);
 	            //curEn = curEn->next;
+	        size += wc->wordCount[i]->count;
 	        //}
 	    }
 	}
+	//printf("The total # of words is %ld.\n", size);
 }
 
 void
