@@ -4,36 +4,147 @@
 #include "thread.h"
 #include "interrupt.h"
 
+enum t_state {
+    RUNNING = 0,
+    READY,
+    BLOCKED,
+    EXITED
+};
+
 /* This is the thread control block */
 struct thread {
 	/* ... Fill this in ... */
+	enum t_state state;
+        Tid tid;
+        ucontext_t t_context;
 };
+
+struct t_queue {
+    struct thread t;
+    struct t_queue * next;
+};
+
+struct t_queue * dequeue(struct t_queue ** tq, Tid tid);
+Tid enqueue(struct t_queue ** tq, struct t_queue * newT);
+
+Tid numT;
+struct t_queue * curT;
+struct t_queue * readyQ;
+struct t_queue * waitQ;
+
+struct t_queue * dequeue(struct t_queue ** tq, Tid tid) {
+    //struct t_queue invalid;
+    //invalid.t.tid = THREAD_INVALID;
+    if (*tq == NULL) {
+        return NULL;
+    }
+    struct t_queue * ret;
+    struct t_queue * curTq = *tq;
+    struct t_queue * preTq = NULL;
+    while (curTq != NULL) {
+        if (curTq->t.tid == tid) {
+            if (preTq == NULL) {
+                *tq = curTq->next;
+            } else {
+                preTq->next = curTq->next;
+            }
+            ret = curTq;
+            return ret;
+        }
+        curTq = curTq->next;
+    }
+    return NULL;
+}
+
+Tid enqueue(struct t_queue ** tq, struct t_queue * newT) {
+    //struct t_queue temp;
+    //temp.t = t;
+    //temp.next = NULL;
+
+    struct t_queue * curTq = *tq;
+    if (curTq == NULL) {
+        *tq = newT;
+        return newT->t.tid;
+    }
+    while (curTq != NULL) {
+        if (curTq->next == NULL) {
+            curTq->next = newT;
+            return newT->t.tid;
+        }
+        curTq = curTq->next;
+    }
+    return THREAD_FAILED;
+}
 
 void
 thread_init(void)
 {
 	/* your optional code here */
+        numT = 1;
+        curT = (struct t_queue *)malloc(sizeof(struct t_queue));
+        curT->t.tid = 0;
+        curT->t.state = RUNNING;
+        curT->next = NULL;
+        readyQ = NULL;
+        waitQ = NULL;
 }
 
 Tid
 thread_id()
 {
-	TBD();
-	return THREAD_INVALID;
+	//TBD();
+	return curT->t.tid;
 }
 
 Tid
 thread_create(void (*fn) (void *), void *parg)
 {
-	TBD();
-	return THREAD_FAILED;
+	//TBD();
+	struct t_queue * newT = (struct t_queue *)malloc(sizeof(struct t_queue));
+	ucontext_t newContext;
+	if (numT >= THREAD_MAX_THREADS) return THREAD_NOMORE;
+	getcontext(&newContext);
+	newContext.uc_stack.ss_sp = malloc(THREAD_MIN_STACK);
+	if (newContext.uc_stack.ss_sp == NULL) return THREAD_NOMEMORY;
+	newContext.uc_stack.ss_size = THREAD_MIN_STACK;
+	newContext.uc_stack.ss_flags= 0;
+
+        makecontext(&newContext, (void(*)(void))fn, 1, parg);
+
+        newT->t.tid = numT++;
+        newT->t.state = READY;
+        newT->t.t_context = newContext;
+        newT->next = NULL;
+
+        enqueue(&readyQ, newT);
+
+	return newT->t.tid;
 }
 
 Tid
 thread_yield(Tid want_tid)
 {
-	TBD();
-	return THREAD_FAILED;
+	//TBD();
+        if (want_tid == THREAD_ANY) {
+            if (readyQ == NULL) return THREAD_NONE;
+            else want_tid = readyQ->t.tid;
+        }
+
+        if (want_tid == THREAD_SELF || want_tid == thread_id()) return thread_id();
+
+        struct t_queue * ret = dequeue(&readyQ, want_tid);
+        if (ret == NULL) return THREAD_INVALID;
+        
+        ucontext_t save;
+        getcontext(&save);
+        curT->t.t_context = save;
+        curT->t.state = READY;
+        ret->t.state = RUNNING;
+        enqueue(&readyQ, curT);
+        curT = ret;
+
+        swapcontext(&save, &(curT->t.t_context));
+        return want_tid;
 }
 
 Tid
