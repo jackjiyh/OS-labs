@@ -30,6 +30,7 @@ Tid enqueue(struct t_queue ** tq, struct t_queue * newT);
 Tid numT;
 struct t_queue * curT;
 struct t_queue * readyQ;
+struct t_queue * rearRq;
 struct t_queue * waitQ;
 
 struct t_queue * dequeue(struct t_queue ** tq, Tid tid) {
@@ -45,8 +46,10 @@ struct t_queue * dequeue(struct t_queue ** tq, Tid tid) {
         if (curTq->t.tid == tid) {
             if (preTq == NULL) {
                 *tq = curTq->next;
+                if (curTq == rearRq) rearRq = curTq->next;
             } else {
                 preTq->next = curTq->next;
+                if (curTq == rearRq) rearRq = preTq;
             }
             ret = curTq;
             return ret;
@@ -64,16 +67,20 @@ Tid enqueue(struct t_queue ** tq, struct t_queue * newT) {
     struct t_queue * curTq = *tq;
     if (curTq == NULL) {
         *tq = newT;
+        rearRq = newT;
         return newT->t.tid;
     }
-    while (curTq != NULL) {
+    /*while (curTq != NULL) {
         if (curTq->next == NULL) {
             curTq->next = newT;
             return newT->t.tid;
         }
         curTq = curTq->next;
-    }
-    return THREAD_FAILED;
+    }*/
+    rearRq->next = newT;
+    rearRq = newT;
+    return newT->t.tid;
+    //return THREAD_FAILED;
 }
 
 void
@@ -86,6 +93,7 @@ thread_init(void)
         curT->t.state = RUNNING;
         curT->next = NULL;
         readyQ = NULL;
+        rearRq = NULL;
         waitQ = NULL;
 }
 
