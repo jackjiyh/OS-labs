@@ -24,16 +24,21 @@ struct t_queue {
     struct t_queue * next;
 };
 
-struct t_queue * dequeue(struct t_queue ** tq, Tid tid);
-Tid enqueue(struct t_queue ** tq, struct t_queue * newT);
+struct t_queue * dequeue(struct t_queue ** tq, struct t_queue ** rear, Tid tid);
+Tid enqueue(struct t_queue ** tq, struct t_queue ** rear, struct t_queue * newT);
 
+
+/* Global Variables */
 Tid numT;
 struct t_queue * curT;
 struct t_queue * readyQ;
 struct t_queue * rearRq;
-struct t_queue * waitQ;
+struct t_queue * exitQ;
+struct t_queue * rearEq;
+Tid killedTid[THREAD_MAX_THREADS];
+int numKT;
 
-struct t_queue * dequeue(struct t_queue ** tq, Tid tid) {
+struct t_queue * dequeue(struct t_queue ** tq, struct t_queue ** rear, Tid tid) {
     //struct t_queue invalid;
     //invalid.t.tid = THREAD_INVALID;
     if (*tq == NULL) {
@@ -46,10 +51,10 @@ struct t_queue * dequeue(struct t_queue ** tq, Tid tid) {
         if (curTq->t.tid == tid) {
             if (preTq == NULL) {
                 *tq = curTq->next;
-                if (curTq == rearRq) rearRq = curTq->next;
+                if (curTq == *rear) (*rear) = curTq->next;
             } else {
                 preTq->next = curTq->next;
-                if (curTq == rearRq) rearRq = preTq;
+                if (curTq == *rear) (*rear) = preTq;
             }
             ret = curTq;
             return ret;
@@ -59,7 +64,7 @@ struct t_queue * dequeue(struct t_queue ** tq, Tid tid) {
     return NULL;
 }
 
-Tid enqueue(struct t_queue ** tq, struct t_queue * newT) {
+Tid enqueue(struct t_queue ** tq, struct t_queue ** rear, struct t_queue * newT) {
     //struct t_queue temp;
     //temp.t = t;
     //temp.next = NULL;
@@ -67,7 +72,7 @@ Tid enqueue(struct t_queue ** tq, struct t_queue * newT) {
     struct t_queue * curTq = *tq;
     if (curTq == NULL) {
         *tq = newT;
-        rearRq = newT;
+        (*rear) = newT;
         return newT->t.tid;
     }
     /*while (curTq != NULL) {
@@ -77,8 +82,8 @@ Tid enqueue(struct t_queue ** tq, struct t_queue * newT) {
         }
         curTq = curTq->next;
     }*/
-    rearRq->next = newT;
-    rearRq = newT;
+    (*rear)->next = newT;
+    (*rear) = newT;
     return newT->t.tid;
     //return THREAD_FAILED;
 }
@@ -94,7 +99,9 @@ thread_init(void)
         curT->next = NULL;
         readyQ = NULL;
         rearRq = NULL;
-        waitQ = NULL;
+        exitQ = NULL;
+        rearEq = NULL;
+        numKT = 0;
 }
 
 Tid
@@ -124,7 +131,7 @@ thread_create(void (*fn) (void *), void *parg)
         newT->t.t_context = newContext;
         newT->next = NULL;
 
-        enqueue(&readyQ, newT);
+        enqueue(&readyQ, &rearRq, newT);
 
 	return newT->t.tid;
 }
@@ -140,7 +147,7 @@ thread_yield(Tid want_tid)
 
         if (want_tid == THREAD_SELF || want_tid == thread_id()) return thread_id();
 
-        struct t_queue * ret = dequeue(&readyQ, want_tid);
+        struct t_queue * ret = dequeue(&readyQ, &rearRq, want_tid);
         if (ret == NULL) return THREAD_INVALID;
         
         ucontext_t save;
@@ -148,7 +155,7 @@ thread_yield(Tid want_tid)
         curT->t.t_context = save;
         curT->t.state = READY;
         ret->t.state = RUNNING;
-        enqueue(&readyQ, curT);
+        enqueue(&readyQ, &rearRq, curT);
         curT = ret;
 
         swapcontext(&save, &(curT->t.t_context));
@@ -158,14 +165,24 @@ thread_yield(Tid want_tid)
 Tid
 thread_exit()
 {
-	TBD();
+	//TBD();
+	if (readyQ == NULL) return THREAD_NONE;
+	
+	//struct t_queue * ret = dequeue(&readyQ, &rearRq, readyQ->t.tid);
+
+	ucontext_t save;
+	getcontext(&save);
+	curT->t.t_context = save;
+	curT->t.state = EXITED;
+        
 	return THREAD_FAILED;
 }
 
 Tid
 thread_kill(Tid tid)
 {
-	TBD();
+	//TBD();
+        
 	return THREAD_FAILED;
 }
 
