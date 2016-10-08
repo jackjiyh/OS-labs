@@ -235,6 +235,18 @@ thread_exit()
         curT = ret;
 
         //swapcontext(&save, &(curT->t.t_context));
+        if (readyQ == NULL && curT->t.tid == 0) {
+            while (exitQ != NULL) {
+            struct t_queue * ret = dequeue(&exitQ, &rearEq, exitQ->t.tid);
+            ret->next = NULL;
+            free(ret->t.t_context.uc_stack.ss_sp);
+            killedTid[numKT] = ret->t.tid;
+            numKT += 1;
+            free(ret);
+            numT -= 1;
+	}
+
+        }
         setcontext(&(curT->t.t_context));
         
 	return curId;
