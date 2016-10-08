@@ -26,7 +26,7 @@ struct t_queue {
 
 struct t_queue * dequeue(struct t_queue ** tq, struct t_queue ** rear, Tid tid);
 Tid enqueue(struct t_queue ** tq, struct t_queue ** rear, struct t_queue * newT);
-
+void thread_stub(void(*fn)(void *), void *argv);
 
 /* Global Variables */
 Tid numT;
@@ -50,8 +50,8 @@ struct t_queue * dequeue(struct t_queue ** tq, struct t_queue ** rear, Tid tid) 
     while (curTq != NULL) {
         if (curTq->t.tid == tid) {
             if (preTq == NULL) {
-                *tq = curTq->next;
                 if (curTq == *rear) (*rear) = curTq->next;
+                *tq = curTq->next;
             } else {
                 preTq->next = curTq->next;
                 if (curTq == *rear) (*rear) = preTq;
@@ -59,6 +59,7 @@ struct t_queue * dequeue(struct t_queue ** tq, struct t_queue ** rear, Tid tid) 
             ret = curTq;
             return ret;
         }
+        preTq = curTq;
         curTq = curTq->next;
     }
     return NULL;
@@ -68,7 +69,7 @@ Tid enqueue(struct t_queue ** tq, struct t_queue ** rear, struct t_queue * newT)
     //struct t_queue temp;
     //temp.t = t;
     //temp.next = NULL;
-
+    
     struct t_queue * curTq = *tq;
     if (curTq == NULL) {
         *tq = newT;
@@ -111,6 +112,25 @@ thread_id()
 	return curT->t.tid;
 }
 
+void thread_stub(void(*fn)(void *), void *argv) {
+    Tid ret;
+    fn(argv);
+    ret = thread_exit();
+    assert(ret == THREAD_NONE);
+    printf("here\n");
+    while (exitQ != NULL) {
+        struct t_queue * ret = dequeue(&exitQ, &rearEq, exitQ->t.tid);
+        ret->next = NULL;
+        free(ret->t.t_context.uc_stack.ss_sp);
+        killedTid[numKT] = ret->t.tid;
+        numKT += 1;
+        free(ret);
+        numT -= 1;
+    }
+
+    exit(0);
+}
+
 Tid
 thread_create(void (*fn) (void *), void *parg)
 {
@@ -123,10 +143,22 @@ thread_create(void (*fn) (void *), void *parg)
 	if (newContext.uc_stack.ss_sp == NULL) return THREAD_NOMEMORY;
 	newContext.uc_stack.ss_size = THREAD_MIN_STACK;
 	newContext.uc_stack.ss_flags= 0;
+	unsigned long int * sp = (unsigned long int *)((unsigned long int)newContext.uc_stack.ss_sp + (unsigned long int)newContext.uc_stack.ss_size);
+	sp = (unsigned long int *)(((unsigned long int)sp & -16L) - 8);
+        newContext.uc_mcontext.gregs[REG_RSP] = (unsigned long int)sp;
+        newContext.uc_mcontext.gregs[REG_RIP] = (unsigned long int)thread_stub;
+        newContext.uc_mcontext.gregs[REG_RDI] = (unsigned long int)fn;
+        newContext.uc_mcontext.gregs[REG_RSI] = (unsigned long int)parg;
 
-        makecontext(&newContext, (void(*)(void))fn, 1, parg);
-
-        newT->t.tid = numT++;
+        //makecontext(&newContext, (void(*)(void))fn, 1, parg);
+        
+        
+        if (numKT == 0) newT->t.tid = numT++;
+        else {
+            newT->t.tid = killedTid[numKT-1];
+            numKT -= 1;
+            numT++;
+        }
         newT->t.state = READY;
         newT->t.t_context = newContext;
         newT->next = NULL;
@@ -139,6 +171,7 @@ thread_create(void (*fn) (void *), void *parg)
 Tid
 thread_yield(Tid want_tid)
 {
+        int swapFlag = 0;
 	//TBD();
         if (want_tid == THREAD_ANY) {
             if (readyQ == NULL) return THREAD_NONE;
@@ -149,16 +182,25 @@ thread_yield(Tid want_tid)
 
         struct t_queue * ret = dequeue(&readyQ, &rearRq, want_tid);
         if (ret == NULL) return THREAD_INVALID;
+        ret->next = NULL;
+        
         
         ucontext_t save;
         getcontext(&save);
-        curT->t.t_context = save;
-        curT->t.state = READY;
-        ret->t.state = RUNNING;
-        enqueue(&readyQ, &rearRq, curT);
-        curT = ret;
+        if (swapFlag == 0) {
+            swapFlag = 1;
+            //save.uc_mcontext.gregs[REG_RIP] += 113;
+            curT->t.t_context = save;
+            curT->t.state = READY;
+            //curT->next = NULL;
+            ret->t.state = RUNNING;
+            enqueue(&readyQ, &rearRq, curT);
+            curT = ret;
 
-        swapcontext(&save, &(curT->t.t_context));
+            //swapcontext(&save, &(curT->t.t_context));
+            setcontext(&(curT->t.t_context));
+        }
+
         return want_tid;
 }
 
@@ -166,24 +208,63 @@ Tid
 thread_exit()
 {
 	//TBD();
+	//return THREAD_FAILED;
+        while (exitQ != NULL) {
+            struct t_queue * ret = dequeue(&exitQ, &rearEq, exitQ->t.tid);
+            ret->next = NULL;
+            free(ret->t.t_context.uc_stack.ss_sp);
+            killedTid[numKT] = ret->t.tid;
+            numKT += 1;
+            free(ret);
+            numT -= 1;
+	}
+
 	if (readyQ == NULL) return THREAD_NONE;
 	
-	//struct t_queue * ret = dequeue(&readyQ, &rearRq, readyQ->t.tid);
+	struct t_queue * ret = dequeue(&readyQ, &rearRq, readyQ->t.tid);
+        Tid curId = thread_id();
+        ret->next = NULL;
+        //int swapFlag = 0;
 
 	ucontext_t save;
 	getcontext(&save);
 	curT->t.t_context = save;
 	curT->t.state = EXITED;
+        ret->t.state = RUNNING;
+        enqueue(&exitQ, &rearEq, curT);
+        curT = ret;
+
+        //swapcontext(&save, &(curT->t.t_context));
+        setcontext(&(curT->t.t_context));
         
-	return THREAD_FAILED;
+	return curId;
 }
 
 Tid
 thread_kill(Tid tid)
 {
+        //return THREAD_FAILED;
 	//TBD();
-        
-	return THREAD_FAILED;
+	while (exitQ != NULL) {
+            struct t_queue * ret = dequeue(&exitQ, &rearEq, exitQ->t.tid);
+            ret->next = NULL;
+            free(ret->t.t_context.uc_stack.ss_sp);
+            killedTid[numKT] = ret->t.tid;
+            numKT += 1;
+            free(ret);
+            numT -= 1;
+	}
+
+        struct t_queue * ret = dequeue(&readyQ, &rearRq, tid);
+        if (ret == NULL) return THREAD_INVALID;
+        ret->t.state = EXITED;
+        free(ret->t.t_context.uc_stack.ss_sp);
+        killedTid[numKT] = ret->t.tid;
+        numKT += 1;
+        free(ret);
+        numT -= 1;
+
+	return tid;
 }
 
 /*******************************************************************
