@@ -28,6 +28,8 @@ struct t_queue {
 struct t_queue * dequeue(struct t_queue ** tq, struct t_queue ** rear, Tid tid);
 Tid enqueue(struct t_queue ** tq, struct t_queue ** rear, struct t_queue * newT);
 void thread_stub(void(*fn)(void *), void *argv);
+void kill_exited();
+
 
 /* Global Variables */
 Tid numT;
@@ -91,6 +93,22 @@ Tid enqueue(struct t_queue ** tq, struct t_queue ** rear, struct t_queue * newT)
     (*rear) = newT;
     return newT->t.tid;
     //return THREAD_FAILED;
+}
+
+void kill_exited() {
+        while (exitQ != NULL) {
+            if (exitQ->t.tid == 0) {
+                exitQ = exitQ->next;
+                continue;
+            }
+            struct t_queue * ret = dequeue(&exitQ, &rearEq, exitQ->t.tid);
+            ret->next = NULL;
+            free(ret->t.ss_sp);
+            killedTid[numKT] = ret->t.tid;
+            numKT += 1;
+            free(ret);
+            numT -= 1;
+	}
 }
 
 void
@@ -180,19 +198,7 @@ thread_yield(Tid want_tid)
         /*if (readyQ == NULL && dummy != NULL) {
             free(dummy);
         }*/
-        while (exitQ != NULL) {
-            if (exitQ->t.tid == 0) {
-                exitQ = exitQ->next;
-                continue;
-            }
-            struct t_queue * ret = dequeue(&exitQ, &rearEq, exitQ->t.tid);
-            ret->next = NULL;
-            free(ret->t.ss_sp);
-            killedTid[numKT] = ret->t.tid;
-            numKT += 1;
-            free(ret);
-            numT -= 1;
-	}
+        kill_exited();
         int swapFlag = 0;
 	//TBD();
         if (want_tid == THREAD_ANY) {
@@ -233,19 +239,7 @@ thread_exit()
 {
 	//TBD();
 	//return THREAD_FAILED;
-        while (exitQ != NULL) {
-            if (exitQ->t.tid == 0) {
-                exitQ = exitQ->next;
-                continue;
-            }
-            struct t_queue * ret = dequeue(&exitQ, &rearEq, exitQ->t.tid);
-            ret->next = NULL;
-            free(ret->t.ss_sp);
-            killedTid[numKT] = ret->t.tid;
-            numKT += 1;
-            free(ret);
-            numT -= 1;
-	}
+        kill_exited();
 
 	if (readyQ == NULL) return THREAD_NONE;
 	
@@ -273,19 +267,7 @@ thread_kill(Tid tid)
 {
         //return THREAD_FAILED;
 	//TBD();
-	while (exitQ != NULL) {
-            if (exitQ->t.tid == 0) {
-                exitQ = exitQ->next;
-                continue;
-            }
-            struct t_queue * ret = dequeue(&exitQ, &rearEq, exitQ->t.tid);
-            ret->next = NULL;
-            free(ret->t.ss_sp);
-            killedTid[numKT] = ret->t.tid;
-            numKT += 1;
-            free(ret);
-            numT -= 1;
-	}
+        kill_exited();
 
         struct t_queue * ret = dequeue(&readyQ, &rearRq, tid);
         if (ret == NULL) return THREAD_INVALID;
