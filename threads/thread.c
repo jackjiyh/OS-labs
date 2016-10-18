@@ -403,9 +403,21 @@ thread_wakeup(struct wait_queue *queue, int all)
 	//return 0;
 }
 
+struct wait_queue * queue;
+int tset(struct lock * lock);
+
 struct lock {
 	/* ... Fill this in ... */
+	int state;
 };
+
+int tset(struct lock * lock) {
+    int enable = interrupts_set(0);
+    int old = lock->state;
+    lock->state = 1;
+    interrupts_set(enable);
+    return old;
+}
 
 struct lock *
 lock_create()
@@ -415,7 +427,9 @@ lock_create()
 	lock = malloc(sizeof(struct lock));
 	assert(lock);
 
-	TBD();
+	//TBD();
+	lock->state = 0;
+	if (queue == NULL) queue = wait_queue_create();
 
 	return lock;
 }
@@ -425,7 +439,8 @@ lock_destroy(struct lock *lock)
 {
 	assert(lock != NULL);
 
-	TBD();
+	//TBD();
+	assert(!lock->state);
 
 	free(lock);
 }
@@ -435,15 +450,24 @@ lock_acquire(struct lock *lock)
 {
 	assert(lock != NULL);
 
-	TBD();
+	//TBD();
+
+	while(tset(lock)) {
+	    thread_sleep(queue);
+	}
 }
 
 void
 lock_release(struct lock *lock)
 {
+	int enable = interrupts_set(0);
 	assert(lock != NULL);
 
-	TBD();
+	//TBD();
+
+	thread_wakeup(queue, 0);
+	lock->state = 0;
+	interrupts_set(enable);
 }
 
 struct cv {
