@@ -142,7 +142,9 @@ thread_id()
 
 void thread_stub(void(*fn)(void *), void *argv) {
     Tid ret;
+    int enable = interrupts_set(1);
     fn(argv);
+    interrupts_set(enable);
     ret = thread_exit();
     assert(ret == THREAD_NONE);
     //printf("here\n");
@@ -154,7 +156,11 @@ Tid
 thread_create(void (*fn) (void *), void *parg)
 {
 	//TBD();
-	if (numT >= THREAD_MAX_THREADS) return THREAD_NOMORE;
+        int enable = interrupts_set(0);        
+	if (numT >= THREAD_MAX_THREADS) {
+	    interrupts_set(enable);
+	    return THREAD_NOMORE;
+	}
 	struct t_queue * newT = (struct t_queue *)malloc(sizeof(struct t_queue));
 	ucontext_t newContext;
 	getcontext(&newContext);
@@ -163,7 +169,11 @@ thread_create(void (*fn) (void *), void *parg)
 	    return THREAD_NOMORE;
 	}*/
 	newContext.uc_stack.ss_sp = malloc(THREAD_MIN_STACK);
-	if (newContext.uc_stack.ss_sp == NULL) return THREAD_NOMEMORY;
+	if (newContext.uc_stack.ss_sp == NULL) {
+	    free(newT);
+	    interrupts_set(enable);
+	    return THREAD_NOMEMORY;
+	}
 	newContext.uc_stack.ss_size = THREAD_MIN_STACK;
 	newContext.uc_stack.ss_flags= 0;
 	unsigned long int * sp = (unsigned long int *)((unsigned long int)newContext.uc_stack.ss_sp + (unsigned long int)newContext.uc_stack.ss_size);
@@ -174,7 +184,6 @@ thread_create(void (*fn) (void *), void *parg)
         newContext.uc_mcontext.gregs[REG_RSI] = (unsigned long int)parg;
 
         //makecontext(&newContext, (void(*)(void))fn, 1, parg);
-        
         
         if (numKT == 0) newT->t.tid = numT++;
         else {
@@ -188,7 +197,7 @@ thread_create(void (*fn) (void *), void *parg)
         newT->next = NULL;
 
         enqueue(&readyQ, &rearRq, newT);
-
+        interrupts_set(enable);
 	return newT->t.tid;
 }
 
@@ -198,22 +207,28 @@ thread_yield(Tid want_tid)
         /*if (readyQ == NULL && dummy != NULL) {
             free(dummy);
         }*/
+	int enable = interrupts_set(0);
         kill_exited();
         int swapFlag = 0;
 	//TBD();
         if (want_tid == THREAD_ANY) {
-            if (readyQ == NULL) return THREAD_NONE;
-            else want_tid = readyQ->t.tid;
+            if (readyQ == NULL) {
+	        interrupts_set(enable);
+                return THREAD_NONE;
+            } else want_tid = readyQ->t.tid;
         }
 
-        if (want_tid == THREAD_SELF || want_tid == thread_id()) return thread_id();
+        if (want_tid == THREAD_SELF || want_tid == thread_id()) {
+	    interrupts_set(enable);
+            return thread_id();
+        }
 
         struct t_queue * ret = dequeue(&readyQ, &rearRq, want_tid);
         if (ret == NULL) {
+	    interrupts_set(enable);
             return THREAD_INVALID;
         }
         ret->next = NULL;
-        
         
         ucontext_t save;
         getcontext(&save);
@@ -231,6 +246,7 @@ thread_yield(Tid want_tid)
             setcontext(&(curT->t.t_context));
         }
 
+        interrupts_set(enable);
         return want_tid;
 }
 
@@ -239,14 +255,16 @@ thread_exit()
 {
 	//TBD();
 	//return THREAD_FAILED;
+        int enable = interrupts_set(0);
         kill_exited();
+	if (readyQ == NULL) {
+	    interrupts_set(enable);
+	    return THREAD_NONE;
+	}
 
-	if (readyQ == NULL) return THREAD_NONE;
-	
 	struct t_queue * ret = dequeue(&readyQ, &rearRq, readyQ->t.tid);
         Tid curId = thread_id();
         ret->next = NULL;
-        //int swapFlag = 0;
 
 	ucontext_t save;
 	getcontext(&save);
@@ -259,6 +277,7 @@ thread_exit()
         //swapcontext(&save, &(curT->t.t_context));
         setcontext(&(curT->t.t_context));
         
+        interrupts_set(enable);
 	return curId;
 }
 
@@ -267,8 +286,9 @@ thread_kill(Tid tid)
 {
         //return THREAD_FAILED;
 	//TBD();
+        int enable = interrupts_set(0);
         kill_exited();
-
+        
         struct t_queue * ret = dequeue(&readyQ, &rearRq, tid);
         if (ret == NULL) return THREAD_INVALID;
         ret->t.state = EXITED;
@@ -277,7 +297,7 @@ thread_kill(Tid tid)
         numKT += 1;
         free(ret);
         numT -= 1;
-
+        interrupts_set(enable);
 	return tid;
 }
 
@@ -288,6 +308,8 @@ thread_kill(Tid tid)
 /* This is the wait queue structure */
 struct wait_queue {
 	/* ... Fill this in ... */
+        struct t_queue * front;
+        struct t_queue * rear;
 };
 
 struct wait_queue *
@@ -298,23 +320,53 @@ wait_queue_create()
 	wq = malloc(sizeof(struct wait_queue));
 	assert(wq);
 
-	TBD();
+	//TBD();
+	wq->front = NULL;
+	wq->rear = NULL;
 
-	return wq;
+        return wq;
 }
 
 void
 wait_queue_destroy(struct wait_queue *wq)
 {
-	TBD();
+	//TBD();
 	free(wq);
 }
 
 Tid
 thread_sleep(struct wait_queue *queue)
 {
-	TBD();
-	return THREAD_FAILED;
+	//TBD();
+        int enable = interrupts_set(0);
+        int swapFlag = 0;
+        if (queue == NULL) {
+	    interrupts_set(enable);
+            return THREAD_INVALID;
+        }
+        if (readyQ == NULL) {
+	    interrupts_set(enable);
+            return THREAD_NONE;
+        }
+
+        struct t_queue * ret = dequeue(&readyQ, &rearRq, readyQ->t.tid);
+        ret->next = NULL;
+            
+        ucontext_t save;
+        getcontext(&save);
+        if (swapFlag == 0) {
+            swapFlag = 1;
+            curT->t.t_context = save;
+            curT->t.state = BLOCKED;
+            ret->t.state = RUNNING;
+            enqueue(&(queue->front), &(queue->rear), curT);
+            curT = ret;
+
+            setcontext(&(curT->t.t_context));
+        }
+
+	interrupts_set(enable);
+	return curT->t.tid;
 }
 
 /* when the 'all' parameter is 1, wakeup all threads waiting in the queue.
@@ -322,8 +374,33 @@ thread_sleep(struct wait_queue *queue)
 int
 thread_wakeup(struct wait_queue *queue, int all)
 {
-	TBD();
-	return 0;
+	//TBD();
+	int enable = interrupts_set(0);
+	int numWaked = 0;
+	if (queue == NULL || queue->front == NULL) {
+	    interrupts_set(enable);
+	    return 0;
+	}
+	if (all == 0) {
+	    struct t_queue * ret = dequeue(&(queue->front), &(queue->rear), queue->front->t.tid);
+	    ret->next = NULL;
+	    ret->t.state = READY;
+	    enqueue(&readyQ, &rearRq, ret);
+	    interrupts_set(enable);
+	    return 1;
+	} else {
+	    while(queue->front != NULL) {
+	        struct t_queue * ret = dequeue(&(queue->front), &(queue->rear), queue->front->t.tid);
+	        ret->next = NULL;
+	        ret->t.state = READY;
+	        enqueue(&readyQ, &rearRq, ret);
+	        numWaked += 1;
+	    }
+	    interrupts_set(enable);
+	    return numWaked;
+	}
+
+	//return 0;
 }
 
 struct lock {
