@@ -472,6 +472,7 @@ lock_release(struct lock *lock)
 
 struct cv {
 	/* ... Fill this in ... */
+        struct wait_queue * wq;
 };
 
 struct cv *
@@ -482,7 +483,8 @@ cv_create()
 	cv = malloc(sizeof(struct cv));
 	assert(cv);
 
-	TBD();
+	//TBD();
+	cv->wq = wait_queue_create();
 
 	return cv;
 }
@@ -491,35 +493,47 @@ void
 cv_destroy(struct cv *cv)
 {
 	assert(cv != NULL);
-
-	TBD();
-
+        assert(cv->wq->front == NULL);
+	//TBD();
+        wait_queue_destroy(cv->wq);       
 	free(cv);
 }
 
 void
 cv_wait(struct cv *cv, struct lock *lock)
 {
+        int enable = interrupts_set(0);
 	assert(cv != NULL);
 	assert(lock != NULL);
-
-	TBD();
+        assert(lock->state);
+        //TBD();
+        lock_release(lock);
+        thread_sleep(cv->wq);
+        lock_acquire(lock);
+        interrupts_set(enable);
 }
 
 void
 cv_signal(struct cv *cv, struct lock *lock)
 {
+        int enable = interrupts_set(0);
 	assert(cv != NULL);
 	assert(lock != NULL);
-
-	TBD();
+        assert(lock->state);
+	//TBD();
+	//int enable = interrupts_set(0);
+        thread_wakeup(cv->wq, 0);
+        interrupts_set(enable);	
 }
 
 void
 cv_broadcast(struct cv *cv, struct lock *lock)
 {
+        int enable = interrupts_set(0);
 	assert(cv != NULL);
 	assert(lock != NULL);
-
-	TBD();
+        assert(lock->state);
+	//TBD();
+	thread_wakeup(cv->wq, 1);
+	interrupts_set(enable);
 }
