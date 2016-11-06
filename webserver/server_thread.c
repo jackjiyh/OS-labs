@@ -1,12 +1,25 @@
 #include "request.h"
 #include "server_thread.h"
 #include "common.h"
+#include <pthread.h>
+
+
+void * process_request(void *argv);
+
+struct request_buffer {
+    int * buffer;
+    int begin;
+    int end;
+};
+
 
 struct server {
 	int nr_threads;
 	int max_requests;
 	int max_cache_size;
 	/* add any other parameters you need */
+        struct request_buffer request_buffer;
+        pthread_t * threads;
 };
 
 /* static functions */
@@ -62,19 +75,54 @@ out:
 }
 
 /* entry point functions */
+pthread_cond_t empty = PTHREAD_COND_INITIALIZER;
+pthread_cond_t full = PTHREAD_COND_INITIALIZER;
+pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
+
+void * process_request(void *argv) {
+    
+    while (1) {
+        pthread_mutex_lock(&lock);
+        struct server * sv = argv;
+        while (sv->request_buffer.begin == sv->request_buffer.end) { // empty
+            pthread_cond_wait(&empty, &lock);
+        }
+        int connfd = sv->request_buffer.buffer[sv->request_buffer.begin];
+        if ( (sv->request_buffer.end + 1) % (sv->max_requests + 1) == sv->request_buffer.begin ) {
+            pthread_cond_signal(&full);
+        }
+        sv->request_buffer.begin = (sv->request_buffer.begin + 1) % (sv->max_requests + 1);
+        pthread_mutex_unlock(&lock);
+        do_server_request(sv, connfd);
+    }
+}
+
 
 struct server *
 server_init(int nr_threads, int max_requests, int max_cache_size)
 {
 	struct server *sv;
-
+        int i;
 	sv = Malloc(sizeof(struct server));
 	sv->nr_threads = nr_threads;
 	sv->max_requests = max_requests;
 	sv->max_cache_size = max_cache_size;
 
 	if (nr_threads > 0 || max_requests > 0 || max_cache_size > 0) {
-		TBD();
+	
+	    if (max_requests > 0) {
+	        sv->request_buffer.buffer = (int *)malloc((max_requests+1)*sizeof(int));
+	        sv->request_buffer.begin = 0;
+	        sv->request_buffer.end = 0;
+	    }
+	    
+	    if (nr_threads > 0) {
+	        sv->threads = (pthread_t *)malloc((nr_threads)*sizeof(pthread_t));
+                
+                for (i=0; i<nr_threads; i++) {
+                    pthread_create(&sv->threads[i], NULL, &process_request, sv);
+                }
+	    }
 	}
 
 	/* Lab 4: create queue of max_request size when max_requests > 0 */
@@ -94,6 +142,16 @@ server_request(struct server *sv, int connfd)
 	} else {
 		/*  Save the relevant info in a buffer and have one of the
 		 *  worker threads do the work. */
-		TBD();
+		//TBD();
+		pthread_mutex_lock(&lock);
+		while ((sv->request_buffer.end + 1) % (sv->max_requests + 1) == sv->request_buffer.begin) {
+		    pthread_cond_wait(&full, &lock);
+		}
+		sv->request_buffer.buffer[sv->request_buffer.end] = connfd;
+		if ( sv->request_buffer.begin == sv->request_buffer.end ) {
+		    pthread_cond_signal(&empty);
+		}
+		sv->request_buffer.end = (sv->request_buffer.end + 1) % (sv->max_requests + 1);
+		pthread_mutex_unlock(&lock);
 	}
 }
