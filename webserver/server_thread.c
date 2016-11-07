@@ -4,7 +4,7 @@
 #include <pthread.h>
 
 
-void * process_request(void *argv);
+static void * process_request(void *argv);
 
 struct request_buffer {
     int * buffer;
@@ -79,7 +79,7 @@ pthread_cond_t empty = PTHREAD_COND_INITIALIZER;
 pthread_cond_t full = PTHREAD_COND_INITIALIZER;
 pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
 
-void * process_request(void *argv) {
+static void * process_request(void *argv) {
     
     while (1) {
         pthread_mutex_lock(&lock);
@@ -95,6 +95,7 @@ void * process_request(void *argv) {
         pthread_mutex_unlock(&lock);
         do_server_request(sv, connfd);
     }
+    return NULL;
 }
 
 
