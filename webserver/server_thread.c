@@ -2,9 +2,15 @@
 #include "server_thread.h"
 #include "common.h"
 #include <pthread.h>
+#include <math.h>
 
 
 static void * process_request(void *argv);
+int cache_lookup(struct server * sv, char * file_name);
+int hash_func(char * file_name, int size);
+int cache_insert(struct server *sv, struct file_data *data);
+int cache_evict(struct server *sv); 
+static void do_server_request_no_cache(struct server *sv, int connfd);
 
 struct request_buffer {
     int * buffer;
@@ -12,13 +18,33 @@ struct request_buffer {
     int end;
 };
 
+struct hash_entry {
+    char * file_name;
+    char * file_buf;
+    int evicted;
+    int rc;
+    //pthread_mutex_t lock_h;
+};
 
+struct LF_entry {
+    char * file_name;
+    int file_size;
+    int hash_value;
+    struct LF_entry *next;
+};
+
+
+void LF_list_insert(struct server *sv, struct file_data *data, int hash_value); 
 struct server {
 	int nr_threads;
 	int max_requests;
 	int max_cache_size;
 	/* add any other parameters you need */
         struct request_buffer request_buffer;
+        struct hash_entry ** cache;
+        int cache_size;
+        int cache_left;
+        struct LF_entry * LF_list; // a link list sorted in terms of file_size
         pthread_t * threads;
 };
 
@@ -46,10 +72,191 @@ file_data_free(struct file_data *data)
 	free(data);
 }
 
+int hash_func(char * file_name, int size) {
+    int value = 5381;
+    int c, i, len = strlen(file_name);
+
+    for (i=0; i<len; i++) {
+        c = file_name[i];
+        value = ( (value << 5) + value ) ^ c;
+    }
+
+    return abs(value % size);
+}
+
+pthread_mutex_t cache_lock = PTHREAD_MUTEX_INITIALIZER;
+
+/* search the cache to find the file
+ * if found, return the hash_value of the file
+ * if not found, return -1 */
+int
+cache_lookup(struct server * sv, char * file_name) {
+    int size = sv->cache_size;
+    int hash_value = hash_func(file_name, size);
+    struct hash_entry ** cache = sv->cache;
+    
+    while (cache[hash_value]->file_name != NULL || cache[hash_value]->evicted != 0) {
+        if (cache[hash_value]->file_name != file_name) {
+            hash_value = (hash_value + 1) % size;
+        } else {
+            cache[hash_value]->rc += 1;
+            return hash_value;
+        }
+    }
+    return -1;
+    
+}
+
+/* insert the new cache entry to LF_list
+ * nodes are inserted in descending orders in terms of file_size */
+void LF_list_insert(struct server *sv, struct file_data *data, int hash_value) {
+    struct LF_entry * newEn = Malloc(sizeof(struct LF_entry));
+    newEn->file_name = data->file_name;
+    newEn->file_size = data->file_size;
+    newEn->hash_value = hash_value;
+    newEn->next = NULL;
+    
+    if (sv->LF_list == NULL) {
+        sv->LF_list = newEn;
+    } else {
+        struct LF_entry *curEn = sv->LF_list;
+        struct LF_entry *preEn = NULL;
+        while (curEn != NULL) {
+            if ( newEn->file_size >= curEn->file_size) {
+                newEn->next = curEn;
+                if (preEn == NULL) sv->LF_list = newEn;
+                else preEn->next = newEn;
+                return;
+            } else {
+                if (curEn->next == NULL) {
+                    curEn->next = newEn;
+                    return;
+                } else {
+                    preEn = curEn;
+                    curEn = curEn->next;
+                }
+            }
+        }
+    }
+    assert(sv->LF_list);
+}
+
+/* this function will remove node with largest file_size
+ * and that node needs to be removeable, i.e. rc == 0*/
+struct LF_entry *
+LF_list_remove(struct server *sv) {
+    assert(sv->LF_list != NULL);
+    struct LF_entry *curEn = sv->LF_list;
+    struct LF_entry *preEn = NULL;
+    while (curEn != NULL) {
+        if (sv->cache[curEn->hash_value]->rc == 0) {
+            if (preEn == NULL) {
+                sv->LF_list = curEn->next;
+                curEn->next = NULL;
+            } else {
+                preEn->next = curEn->next;
+                curEn->next = NULL;
+            }
+            return curEn;
+        } else {
+            preEn = curEn;
+            curEn = curEn->next;
+        }
+    }
+    return NULL;
+}
+
+/* insert the new file into the cache
+ * update the LF_list for eviction
+ * return hash_value, the location in cache 
+ * that the file is inserted to */
+int
+cache_insert(struct server *sv, struct file_data *data) {
+    struct hash_entry ** cache = sv->cache;
+    int hash_value = hash_func(data->file_name, sv->cache_size);
+    while (cache[hash_value]->file_name != NULL) {
+        hash_value = (hash_value + 1) % sv->cache_size;
+    }
+
+    cache[hash_value]->file_name = data->file_name;
+    cache[hash_value]->file_buf = data->file_buf;
+    cache[hash_value]->rc = 1;
+    cache[hash_value]->evicted = 0;
+    sv->cache_left -= data->file_size;
+
+    LF_list_insert(sv, data, hash_value);
+    return hash_value;
+}
+
+/* the eviction algorithm
+ * will evict the largest evictable file 
+ * return 1 upon success
+ * return 0 if there is no evictable file*/
+int
+cache_evict(struct server *sv) {
+    struct LF_entry *removed = LF_list_remove(sv);
+    if (removed == NULL) return 0;
+    int hash_value = removed->hash_value;
+    assert(hash_value >= 0);
+    
+    struct hash_entry *entry = sv->cache[hash_value];
+    assert(entry->rc == 0);
+    
+    free(entry->file_name);
+    entry->file_name = NULL;
+    
+    free(entry->file_buf);
+    entry->file_buf = NULL;
+    
+    entry->evicted = 1;
+    sv->cache_left += removed->file_size;
+    return 1;
+}
+
+
+/* cache miss handler
+ * return hash_value upon success
+ * return -1 when failure */
+int 
+cache_miss_handler(struct server *sv, struct request *rq, struct file_data *data) {
+    int ret;
+    int hash_value;
+
+    ret = request_readfile(rq);
+    if (!ret) return -1;
+    pthread_mutex_lock(&cache_lock);
+    hash_value = cache_lookup(sv, data->file_name);
+    if (data->file_size <= sv->cache_left) {
+        if (hash_value == -1) {
+            // insert the file and update LF_list
+            hash_value = cache_insert(sv, data);
+        }
+    } else {
+        if (hash_value == -1) {
+            if (data->file_size >= sv->max_cache_size){
+                pthread_mutex_unlock(&cache_lock);
+                return -2;
+            }
+            //evict
+            while (data->file_size > sv->cache_left) {
+                ret = cache_evict(sv);
+                if (!ret) {
+                    pthread_mutex_unlock(&cache_lock);
+                    return -2;
+                }
+            }
+            //insert
+            hash_value = cache_insert(sv, data);
+        }
+    }
+    pthread_mutex_unlock(&cache_lock);
+    return hash_value;
+}
+
 static void
 do_server_request(struct server *sv, int connfd)
 {
-	int ret;
+	//int ret;
 	struct request *rq;
 	struct file_data *data;
 
@@ -61,17 +268,57 @@ do_server_request(struct server *sv, int connfd)
 		file_data_free(data);
 		return;
 	}
-	/* reads file, 
-	 * fills data->file_buf with the file contents,
-	 * data->file_size with file size. */
-	ret = request_readfile(rq);
-	if (!ret)
-		goto out;
+
+	/* first, find file in the cache
+	 * if miss, call miss handler
+	 * if success, send the file. */
+        pthread_mutex_lock(&cache_lock);
+        int hash_value = cache_lookup(sv, data->file_name);
+        pthread_mutex_unlock(&cache_lock);
+        if (hash_value == -1) {
+            hash_value = cache_miss_handler(sv, rq, data);
+            if (hash_value == -1)
+                goto out;
+            if (hash_value == -2) {
+                request_sendfile(rq);
+                goto out;
+            }
+        } else {
+            data->file_buf = sv->cache[hash_value]->file_buf;
+            // need to update LRU_list later
+        }
+
 	/* sends file to client */
 	request_sendfile(rq);
+        sv->cache[hash_value]->rc -= 1;
+        // prevent the data in cache to be freed
+        data->file_buf = NULL;
+        data->file_name = NULL;
 out:
 	request_destroy(rq);
 	file_data_free(data);
+}
+
+
+static void do_server_request_no_cache(struct server *sv, int connfd) {
+    int ret;
+    struct request *rq;
+    struct file_data *data;
+
+    data = file_data_init();
+
+    rq = request_init(connfd, data);
+    if (!rq) {
+        file_data_free(data);
+        return;
+    }
+
+    ret = request_readfile(rq);
+    if (!ret)
+        goto out1;
+    request_sendfile(rq);
+out1: request_destroy(rq);
+    file_data_free(data);
 }
 
 /* entry point functions */
@@ -93,7 +340,10 @@ static void * process_request(void *argv) {
         }
         sv->request_buffer.begin = (sv->request_buffer.begin + 1) % (sv->max_requests + 1);
         pthread_mutex_unlock(&lock);
-        do_server_request(sv, connfd);
+        if (sv->max_cache_size > 0) do_server_request(sv, connfd);
+        else {
+            do_server_request_no_cache(sv, connfd);
+        }
     }
     return NULL;
 }
@@ -124,6 +374,22 @@ server_init(int nr_threads, int max_requests, int max_cache_size)
                     pthread_create(&sv->threads[i], NULL, &process_request, sv);
                 }
 	    }
+
+	    if (max_cache_size > 0) {
+	        sv->cache_size = 10000;
+	        sv->cache = Malloc(sizeof(struct hash_entry *)*(sv->cache_size));
+	        sv->cache_left = max_cache_size;
+	        for (i=0; i < sv->cache_size; i++) {
+	            sv->cache[i] = Malloc(sizeof(struct hash_entry));
+	            sv->cache[i]->file_name = NULL;
+	            sv->cache[i]->file_buf = NULL;
+	            sv->cache[i]->evicted = 0;
+	            sv->cache[i]->rc = 0;
+	        }
+	        // need to initialize LF_list later
+	        sv->LF_list = NULL;
+	        //printf("Done initializing server\n");
+	    }
 	}
 
 	/* Lab 4: create queue of max_request size when max_requests > 0 */
@@ -139,7 +405,7 @@ void
 server_request(struct server *sv, int connfd)
 {
 	if (sv->nr_threads == 0) { /* no worker threads */
-		do_server_request(sv, connfd);
+		do_server_request_no_cache(sv, connfd);
 	} else {
 		/*  Save the relevant info in a buffer and have one of the
 		 *  worker threads do the work. */
