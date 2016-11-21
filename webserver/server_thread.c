@@ -269,7 +269,7 @@ cache_miss_handler(struct server *sv, struct request *rq, struct file_data *data
         }
     } else {
         if (hash_value == -1) {
-            if (data->file_size >= 0.7*(sv->max_cache_size)){
+            if (data->file_size >= 0.5*(sv->max_cache_size)){
                 pthread_mutex_unlock(&cache_lock);
                 return -2;
             }
