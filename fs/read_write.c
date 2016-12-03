@@ -196,7 +196,8 @@ testfs_allocate_block(struct inode *in, int log_block_nr, char *block)
         }
 
         if (dind_ind_alloc) {
-            testfs_free_block_from_inode(in, dind[dind_nr]);
+            testfs_free_block_from_inode(in, ((int *)dind)[dind_nr]);
+            ((int *)dind)[dind_nr] = 0;
         }
 
         if (dind_allocated) {
@@ -223,7 +224,7 @@ testfs_write_data(struct inode *in, const char *buf, off_t start, size_t size)
     for (i=0; i<num_blocks; i++) {
         ret = testfs_allocate_block(in, block_nr + i, block);
         if (ret < 0) {
-            if ( buf_offset > 0 ) {
+            if ( buf_offset > 0 && ret != -ENOSPC) {
                 in->in.i_size = MAX(in->in.i_size, start + (off_t)buf_offset);
                 in->i_flags |= I_FLAGS_DIRTY;
             }
