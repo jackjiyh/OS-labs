@@ -302,7 +302,7 @@ testfs_free_blocks(struct inode *in)
             if ( ((int *)dind_block)[i] == 0 ) 
                 continue;
             read_blocks(in->sb, block, ((int *)dind_block)[i], 1);
-            long temp = (i == dind_nr) ? (ind_nr) : NR_INDIRECT_BLOCKS;
+            long temp = (i == dind_nr) ? ind_nr : NR_INDIRECT_BLOCKS;
             for (j=0; j < temp; j++) {
                 if ( ((int *)block)[j] == 0)
                     continue;
